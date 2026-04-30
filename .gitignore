@@ -32,8 +32,9 @@ dist/
 # Streamlit
 .streamlit/secrets.toml
 
-# Local data
-data/
+# Local data — runtime caches only; synthetic fixtures under data/{catalog,policies,crm}/ are tracked.
+data/local/
+data/cache/
 *.db
 *.sqlite
 
