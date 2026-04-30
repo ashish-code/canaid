@@ -1,19 +1,30 @@
 """Streamlit chat UI.
 
-Talks to the FastAPI backend over SSE. Renders a per-turn agent trace
-(intent + route + which specialist replied) so a reviewer can see the
-multi-agent harness working without reading logs.
+Two modes selected at startup:
+
+  * **API mode** — `CANAID_API_URL` is set; the UI streams via httpx/SSE
+    from the FastAPI backend. Production-style separation.
+  * **Embedded mode** — `CANAID_API_URL` is unset/blank; the UI runs the
+    LangGraph workflow in-process via `canaid.api.local.run_chat`. Used
+    for the Streamlit Community Cloud deploy where we can't host a
+    sidecar service.
+
+Both modes consume the *same frame protocol* (see `canaid/api/local.py`).
+The render code below is shared.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+from collections.abc import Iterator
+from typing import Any
 
-import httpx
 import streamlit as st
 
-API_URL = os.getenv("CANAID_API_URL", "http://localhost:8000")
+API_URL = os.getenv("CANAID_API_URL", "").strip()
+EMBEDDED_MODE = not API_URL
 
 
 _AGENT_LABELS = {
@@ -26,6 +37,73 @@ _AGENT_LABELS = {
 }
 
 
+# ---- Streaming bridges -----------------------------------------------------
+def _api_stream(message: str, conversation_id: str | None) -> Iterator[dict[str, Any]]:
+    """Stream frames from the FastAPI /chat/stream endpoint over SSE."""
+    import httpx  # local import — Streamlit Cloud doesn't need it in embedded mode
+
+    with httpx.stream(
+        "POST",
+        f"{API_URL}/chat/stream",
+        json={"message": message, "conversation_id": conversation_id},
+        timeout=120,
+    ) as resp:
+        for line in resp.iter_lines():
+            if not line or not line.startswith("data:"):
+                continue
+            yield json.loads(line[len("data:"):].strip())
+
+
+def _embedded_stream(
+    message: str, conversation_id: str | None
+) -> Iterator[dict[str, Any]]:
+    """Drive `run_chat` (async generator) from sync Streamlit code.
+
+    Streamlit's render loop is sync; we own one event loop, drive the async
+    generator one frame at a time, and yield to the caller in between so
+    Streamlit can repaint mid-turn.
+    """
+    from canaid.api.local import run_chat
+
+    loop = asyncio.new_event_loop()
+    try:
+        agen = run_chat(message, conversation_id=conversation_id)
+        while True:
+            try:
+                frame = loop.run_until_complete(agen.__anext__())
+            except StopAsyncIteration:
+                return
+            yield frame
+    finally:
+        loop.close()
+
+
+def _frame_stream(message: str, conversation_id: str | None) -> Iterator[dict[str, Any]]:
+    if EMBEDDED_MODE:
+        yield from _embedded_stream(message, conversation_id)
+    else:
+        yield from _api_stream(message, conversation_id)
+
+
+# ---- Streamlit Cloud secret bridge -----------------------------------------
+def _bridge_streamlit_secrets() -> None:
+    """Streamlit Cloud injects secrets via `st.secrets`; copy each entry into
+    os.environ so our pydantic Settings + boto3's default chain pick them up
+    without a Streamlit-aware code path."""
+    try:
+        for k in list(st.secrets):  # type: ignore[union-attr]
+            v = st.secrets[k]
+            if isinstance(v, str) and not os.getenv(k):
+                os.environ[k] = v
+    except (FileNotFoundError, KeyError, AttributeError):
+        # No secrets file (local dev) — nothing to do.
+        return
+
+
+_bridge_streamlit_secrets()
+
+
+# ---- Page ------------------------------------------------------------------
 st.set_page_config(
     page_title="CanAID — Contact Center",
     layout="wide",
@@ -38,7 +116,7 @@ st.caption(
 )
 
 if "messages" not in st.session_state:
-    st.session_state.messages = []           # list[{role, content, trace?, citations?}]
+    st.session_state.messages = []
 if "conversation_id" not in st.session_state:
     st.session_state.conversation_id = None
 if "queued_prompt" not in st.session_state:
@@ -60,19 +138,35 @@ _SAMPLE_QUESTIONS = [
      "What's the unit price for a case of N95 masks?"),
 ]
 
+
 # ---- Sidebar ---------------------------------------------------------------
 with st.sidebar:
+    mode_label = "embedded (single-process)" if EMBEDDED_MODE else f"API @ {API_URL}"
+    st.caption(f"**Mode:** {mode_label}")
+
     st.subheader("Models per agent")
-    try:
-        models = httpx.get(f"{API_URL}/models", timeout=5).json()
-        for m in models:
+    if EMBEDDED_MODE:
+        # No API to query — render directly from the registry.
+        from canaid.llm.registry import get_all_specs
+
+        for s in get_all_specs():
             st.markdown(
-                f"**{m['agent']}** — `{m['model_id']}`  \n"
-                f"<sub>{m['vendor']} · {m['cost_tier']} cost</sub>",
+                f"**{s.agent}** — `{s.model_id}`  \n"
+                f"<sub>{s.vendor} · {s.cost_tier} cost</sub>",
                 unsafe_allow_html=True,
             )
-    except Exception as e:
-        st.warning(f"Cannot reach API at {API_URL}\n\n{e}")
+    else:
+        try:
+            import httpx
+            models = httpx.get(f"{API_URL}/models", timeout=5).json()
+            for m in models:
+                st.markdown(
+                    f"**{m['agent']}** — `{m['model_id']}`  \n"
+                    f"<sub>{m['vendor']} · {m['cost_tier']} cost</sub>",
+                    unsafe_allow_html=True,
+                )
+        except Exception as e:
+            st.warning(f"Cannot reach API at {API_URL}\n\n{e}")
 
     st.divider()
     st.subheader("Try a sample question")
@@ -91,7 +185,7 @@ with st.sidebar:
         st.rerun()
 
 
-# ---- History ---------------------------------------------------------------
+# ---- Render helpers --------------------------------------------------------
 def _render_trace(trace: dict | None) -> None:
     if not trace:
         return
@@ -136,6 +230,27 @@ def _render_tool_calls(tool_events: list[dict]) -> None:
                 st.markdown(f"**← {ev.get('name')}** `{json.dumps(out)}`")
 
 
+def _render_usage(usage: dict | None) -> None:
+    if not usage:
+        return
+    with st.expander("usage / cost", expanded=False):
+        st.markdown(
+            f"**tokens:** {usage.get('input_tokens', 0)} in / "
+            f"{usage.get('output_tokens', 0)} out  \n"
+            f"**latency:** {usage.get('latency_ms', 0)} ms  \n"
+            f"**cost:** ${usage.get('cost_usd', 0):.6f}"
+        )
+        bym = usage.get("by_model") or {}
+        if bym:
+            st.markdown("**by model:**")
+            for model_id, v in bym.items():
+                st.markdown(
+                    f"  · `{model_id}` — {v.get('input_tokens', 0)} in / "
+                    f"{v.get('output_tokens', 0)} out · ${v.get('cost_usd', 0):.6f}"
+                )
+
+
+# ---- History ---------------------------------------------------------------
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         if msg["role"] == "assistant" and msg.get("trace"):
@@ -145,6 +260,8 @@ for msg in st.session_state.messages:
             _render_citations(msg["citations"])
         if msg["role"] == "assistant" and msg.get("tool_events"):
             _render_tool_calls(msg["tool_events"])
+        if msg["role"] == "assistant" and msg.get("usage"):
+            _render_usage(msg["usage"])
         st.markdown(msg["content"])
 
 
@@ -154,74 +271,77 @@ if prompt is None and st.session_state.queued_prompt is not None:
     prompt = st.session_state.queued_prompt
     st.session_state.queued_prompt = None
 
+
 if prompt:
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
+        cache_box = st.empty()
         trace_box = st.empty()
         cite_box = st.empty()
         tool_box = st.empty()
         body = st.empty()
+        usage_box = st.empty()
+
         accumulated = ""
         trace: dict = {}
         citations: list[dict] = []
         tool_events: list[dict] = []
+        usage: dict = {}
+        cache_hit = False
+
         try:
-            with httpx.stream(
-                "POST",
-                f"{API_URL}/chat/stream",
-                json={
-                    "message": prompt,
-                    "conversation_id": st.session_state.conversation_id,
-                },
-                timeout=120,
-            ) as resp:
-                for line in resp.iter_lines():
-                    if not line or not line.startswith("data:"):
-                        continue
-                    payload = json.loads(line[len("data:"):].strip())
-                    kind = payload.get("type")
-                    if kind == "intent":
-                        trace.update(payload["data"])
-                        with trace_box.container(), st.expander(
-                            "agent trace", expanded=True
-                        ):
-                            _render_trace(trace)
-                    elif kind == "agent_start":
-                        trace["agent"] = payload["data"]["name"]
-                        with trace_box.container(), st.expander(
-                            "agent trace", expanded=True
-                        ):
-                            _render_trace(trace)
-                    elif kind == "citations":
-                        citations = payload.get("data", []) or []
-                        with cite_box.container():
-                            _render_citations(citations)
-                    elif kind == "tool_call":
-                        tool_events.append(
-                            {"kind": "call", **(payload.get("data") or {})}
-                        )
-                        with tool_box.container():
-                            _render_tool_calls(tool_events)
-                    elif kind == "tool_result":
-                        tool_events.append(
-                            {"kind": "result", **(payload.get("data") or {})}
-                        )
-                        with tool_box.container():
-                            _render_tool_calls(tool_events)
-                    elif kind == "token":
-                        accumulated += payload["data"]
-                        body.markdown(accumulated + "▌")
-                    elif kind == "done":
-                        st.session_state.conversation_id = payload.get(
-                            "conversation_id"
-                        )
-                    elif kind == "error":
-                        accumulated = f"_Error: {payload.get('message')}_"
-        except httpx.HTTPError as e:
-            accumulated = f"_Connection error talking to API: {e}_"
+            for payload in _frame_stream(prompt, st.session_state.conversation_id):
+                kind = payload.get("type")
+                if kind == "cache_hit":
+                    cache_hit = True
+                    cache_box.success("⚡ cache hit — replayed without LLM call")
+                elif kind == "intent":
+                    trace.update(payload.get("data") or {})
+                    with trace_box.container(), st.expander(
+                        "agent trace", expanded=True
+                    ):
+                        _render_trace(trace)
+                elif kind == "agent_start":
+                    trace["agent"] = (payload.get("data") or {}).get("name")
+                    with trace_box.container(), st.expander(
+                        "agent trace", expanded=True
+                    ):
+                        _render_trace(trace)
+                elif kind == "citations":
+                    citations = payload.get("data") or []
+                    with cite_box.container():
+                        _render_citations(citations)
+                elif kind == "tool_call":
+                    tool_events.append(
+                        {"kind": "call", **(payload.get("data") or {})}
+                    )
+                    with tool_box.container():
+                        _render_tool_calls(tool_events)
+                elif kind == "tool_result":
+                    tool_events.append(
+                        {"kind": "result", **(payload.get("data") or {})}
+                    )
+                    with tool_box.container():
+                        _render_tool_calls(tool_events)
+                elif kind == "token":
+                    accumulated += payload.get("data") or ""
+                    body.markdown(accumulated + "▌")
+                elif kind == "usage":
+                    usage = payload.get("data") or {}
+                    with usage_box.container():
+                        _render_usage(usage)
+                elif kind == "done":
+                    st.session_state.conversation_id = payload.get(
+                        "conversation_id"
+                    )
+                elif kind == "error":
+                    accumulated = f"_Error: {payload.get('message')}_"
+        except Exception as exc:
+            accumulated = f"_Stream error: {type(exc).__name__}: {exc}_"
+
         body.markdown(accumulated or "_(no response)_")
         st.session_state.messages.append(
             {
@@ -230,5 +350,7 @@ if prompt:
                 "trace": trace,
                 "citations": citations,
                 "tool_events": tool_events,
+                "usage": usage,
+                "cache_hit": cache_hit,
             }
         )

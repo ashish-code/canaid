@@ -29,8 +29,9 @@ dist/
 # OS
 .DS_Store
 
-# Streamlit
+# Streamlit — keep secrets.toml out of git, but allow the .example template.
 .streamlit/secrets.toml
+!.streamlit/secrets.toml.example
 
 # Local data — runtime caches only; synthetic fixtures under data/{catalog,policies,crm}/ are tracked.
 data/local/
