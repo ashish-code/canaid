@@ -1,0 +1,12 @@
+{"id":"r-001","message":"Hi, I run a small clinic in Toronto and I'm thinking about switching distributors. Can you tell me how onboarding works?","expected_user_type":"new","expected_intent":"lead_qualification","expected_route":"qualifier"}
+{"id":"r-002","message":"We're opening a second long-term care facility in Halifax in Q3. How long does it take to get a new account approved?","expected_user_type":"new","expected_intent":"lead_qualification","expected_route":"qualifier"}
+{"id":"r-003","message":"What kind of nitrile gloves do you carry, and which ones are chemo-tested?","expected_user_type":"unknown","expected_intent":"catalog_question","expected_route":"rag"}
+{"id":"r-004","message":"Do your N95 respirators meet NIOSH and how are they packaged?","expected_user_type":"unknown","expected_intent":"catalog_question","expected_route":"rag"}
+{"id":"r-005","message":"What's your return policy on sterile items if the box has been opened?","expected_user_type":"unknown","expected_intent":"catalog_question","expected_route":"rag"}
+{"id":"r-006","message":"Hi, I'm Marc Tremblay from Riverdale General. Where's my last order?","expected_user_type":"existing","expected_intent":"account_lookup","expected_route":"lookup"}
+{"id":"r-007","message":"Can you check the status of order SO-2026-00805 for me?","expected_user_type":"existing","expected_intent":"account_lookup","expected_route":"lookup"}
+{"id":"r-008","message":"My account ID is ACC-1003, what are my recent orders?","expected_user_type":"existing","expected_intent":"account_lookup","expected_route":"lookup"}
+{"id":"r-009","message":"This is unacceptable. I want to talk to a real person right now.","expected_user_type":"unknown","expected_intent":"escalation","expected_route":"escalation"}
+{"id":"r-010","message":"Can someone from your team call me? I have a complicated situation.","expected_user_type":"unknown","expected_intent":"escalation","expected_route":"escalation"}
+{"id":"r-011","message":"Hi! How are you today?","expected_user_type":"unknown","expected_intent":"small_talk","expected_route":"fallback"}
+{"id":"r-012","message":"Thanks for your help.","expected_user_type":"unknown","expected_intent":"small_talk","expected_route":"fallback"}
