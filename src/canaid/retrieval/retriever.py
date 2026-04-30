@@ -17,6 +17,7 @@ from typing import Any
 
 import structlog
 
+from canaid.config import get_settings
 from canaid.retrieval.embeddings import get_embedder
 from canaid.retrieval.store import Hit, get_store
 
@@ -49,7 +50,7 @@ class Retriever:
         self.k = k
         self.min_similarity = min_similarity
         self._embedder = get_embedder()
-        self._store = get_store()
+        self._store = _select_store()
 
     def search(
         self,
@@ -72,6 +73,22 @@ class Retriever:
             top_similarity=hits[0].similarity if hits else None,
         )
         return kept
+
+
+def _select_store():
+    """Pick the vector store based on settings.
+
+    `CANAID_USE_FAISS=true` forces FAISS (Streamlit Cloud path). Otherwise
+    we use pgvector. We deliberately don't auto-fall-back from pgvector to
+    FAISS on connection error — silent degradation between stores would
+    confuse a deploy debugger; raise instead.
+    """
+    if get_settings().use_faiss:
+        from canaid.retrieval.faiss_store import get_faiss_store
+        log.info("retriever.store", kind="faiss")
+        return get_faiss_store()
+    log.info("retriever.store", kind="pgvector")
+    return get_store()
 
 
 @lru_cache(maxsize=1)

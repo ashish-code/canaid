@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     cache_enabled: bool = True
     use_postgres_checkpointer: bool = False
 
+    # -- Single-process / Streamlit Cloud mode -------------------------------
+    # When `embedded=True`, the Streamlit app calls the LangGraph workflow
+    # in-process instead of HTTP-streaming through the FastAPI server. Pairs
+    # naturally with `use_faiss=True` (FAISS in-memory store, no Postgres).
+    embedded: bool = False
+    use_faiss: bool = False
+
     # -- API + UI -------------------------------------------------------------
     api_host: str = "0.0.0.0"
     api_port: int = 8000
