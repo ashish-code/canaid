@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+.python-version-local
+
+# uv
+.uv-cache/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Local data
+data/
+*.db
+*.sqlite
+
+# CDK / infra
+infra/cdk.out/
+infra/node_modules/
+infra/.cdk.staging/
+
+# LangFuse / TruLens local
+trulens.db
+.langfuse/
+
+# Logs
+*.log
+logs/

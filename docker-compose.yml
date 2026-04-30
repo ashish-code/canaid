@@ -1,0 +1,40 @@
+# Local dev stack. Postgres+pgvector backs Phase 3 (RAG) + Phase 6 (long-term
+# memory). Redis backs Phase 6 (semantic cache + session). LangFuse uses the
+# cloud free tier — not in compose.
+#
+# Production equivalents (Phase 9): RDS / Aurora Serverless v2 with pgvector,
+# ElastiCache Redis (or Valkey), and OpenSearch Serverless for the prod RAG
+# index. The local stack is intentionally a subset — we don't bring up a local
+# OpenSearch because pgvector is enough for dev.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: canaid-postgres
+    environment:
+      POSTGRES_USER: canaid
+      POSTGRES_PASSWORD: canaid
+      POSTGRES_DB: canaid
+    ports:
+      - "5432:5432"
+    volumes:
+      - canaid_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U canaid"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: canaid-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  canaid_pgdata:
