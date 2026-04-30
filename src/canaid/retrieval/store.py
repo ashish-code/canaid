@@ -22,10 +22,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
-import psycopg
-from pgvector.psycopg import register_vector
-from psycopg.rows import dict_row
-
+# psycopg + pgvector imports happen INSIDE the class methods so the
+# embedded (Streamlit Cloud / FAISS) deploy doesn't need them installed.
+# `Hit` and the module are still importable without them.
 from canaid.config import get_settings
 from canaid.retrieval.chunker import Chunk
 
@@ -47,6 +46,9 @@ class PgVectorStore:
 
     @contextmanager
     def _conn(self):
+        import psycopg
+        from pgvector.psycopg import register_vector
+
         with psycopg.connect(self.dsn, autocommit=True) as conn:
             register_vector(conn)
             yield conn
@@ -108,6 +110,8 @@ class PgVectorStore:
         k: int = 5,
         doc_type: str | None = None,
     ) -> list[Hit]:
+        from psycopg.rows import dict_row
+
         sql = """
             SELECT doc_id, doc_type, chunk_index, title, content, metadata,
                    1 - (embedding <=> %s::vector) AS similarity
