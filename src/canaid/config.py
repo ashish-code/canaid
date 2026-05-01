@@ -83,6 +83,21 @@ class Settings(BaseSettings):
             or "us-east-1"
         )
 
+    @property
+    def aws_profile(self) -> str | None:
+        """Active AWS profile name, if any.
+
+        Default is `vscode-user` to match the AskAI-Mahabharat reference
+        repo's local profile (already exists in ~/.aws/credentials with
+        Bedrock access). Override per-host via the AWS_PROFILE env var.
+
+        Returns None on hosts where env-var creds are present (Streamlit
+        Cloud, ECS task role, GitHub OIDC) — see `make_aws_session`.
+        """
+        if os.getenv("AWS_ACCESS_KEY_ID"):
+            return None
+        return os.getenv("AWS_PROFILE", "vscode-user")
+
     def postgres_dsn_host_only(self) -> str:
         """Strip credentials from the Postgres DSN for safe logging."""
         try:
@@ -99,20 +114,41 @@ def get_settings() -> Settings:
     return Settings()
 
 
+@lru_cache(maxsize=1)
+def make_aws_session():
+    """Single boto3 Session per process, picking the right credential path.
+
+    The pattern mirrors AskAI-Mahabharat's `get_bedrock_client` to keep
+    behavior consistent across the two demos:
+
+      * If AWS_ACCESS_KEY_ID is set (Streamlit Cloud secrets, ECS task
+        role with web-identity, GitHub OIDC), build a Session WITHOUT a
+        profile name. Passing profile_name on a host with no
+        ~/.aws/config raises ProfileNotFound — this branch avoids that.
+      * Otherwise honor AWS_PROFILE (default `vscode-user`, matching
+        the local profile in ~/.aws/credentials).
+    """
+    import boto3  # local import keeps cold-start light
+
+    s = get_settings()
+    if os.getenv("AWS_ACCESS_KEY_ID"):
+        return boto3.Session(region_name=s.aws_region)
+    return boto3.Session(profile_name=s.aws_profile, region_name=s.aws_region)
+
+
 def boto_client_factory_safe(service: str):
-    """Build a boto3 client; return None if AWS credentials aren't available.
+    """Build a boto3 client; return None if credentials aren't available.
 
     Used by guardrail / PII paths that should *no-op gracefully* when run in
     a dev environment without AWS configured (e.g., unit tests).
     """
     try:
-        import boto3  # local import keeps cold-start light
-        from botocore.exceptions import NoCredentialsError
+        from botocore.exceptions import NoCredentialsError, ProfileNotFound
 
         s = get_settings()
         try:
-            return boto3.client(service, region_name=s.aws_region)
-        except NoCredentialsError:
+            return make_aws_session().client(service, region_name=s.aws_region)
+        except (NoCredentialsError, ProfileNotFound):
             return None
     except Exception:
         return None

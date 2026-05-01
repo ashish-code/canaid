@@ -20,7 +20,6 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
-import boto3
 import structlog
 from botocore.config import Config as BotoConfig
 from tenacity import (
@@ -30,7 +29,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from canaid.config import get_settings
+from canaid.config import get_settings, make_aws_session
 
 log = structlog.get_logger(__name__)
 
@@ -58,10 +57,10 @@ class BedrockClient:
     def __init__(self, region: str | None = None) -> None:
         cfg = get_settings()
         self._region = region or cfg.aws_region
-        # `adaptive` retry mode handles Bedrock throttling more gracefully than
-        # the default `legacy` mode; it spreads retries based on observed
-        # backpressure rather than a fixed schedule.
-        self._client = boto3.client(
+        # `adaptive` retry mode handles Bedrock throttling more gracefully
+        # than the default `legacy` mode. The session picks the right
+        # credential path (profile vs env-var) — see `make_aws_session`.
+        self._client = make_aws_session().client(
             "bedrock-runtime",
             region_name=self._region,
             config=BotoConfig(
