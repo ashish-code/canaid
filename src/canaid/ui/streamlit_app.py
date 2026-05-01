@@ -26,15 +26,31 @@ from typing import Any
 
 import streamlit as st
 
-# Pre-import the heavy chat machinery at module load so any import failure
-# (langchain, faiss, langgraph, etc.) blows up loudly with a visible
-# traceback at the top of the page rather than silently inside a generator.
+# We deliberately do NOT pre-import canaid.api.local at module load —
+# Streamlit Cloud's startup budget appears to be too short for the cumulative
+# `boto3 + langchain + langgraph + faiss + langfuse` import chain (a few
+# seconds), and exceeding it leaves the launcher in a "polling for ready"
+# loop with a blank page. The import is performed lazily on the first chat
+# turn via `_lazy_import_run_chat()` below; errors there surface in the chat
+# bubble's traceback expander.
+_run_chat: Any = None
 _BOOT_ERROR: str | None = None
-try:
-    from canaid.api.local import run_chat as _run_chat
-except Exception:
-    _run_chat = None
-    _BOOT_ERROR = traceback.format_exc()
+
+
+@st.cache_resource(show_spinner="Loading chat backend (one-time)…")
+def _lazy_import_run_chat():
+    """Import `canaid.api.local.run_chat` once and cache it.
+
+    Streamlit's `cache_resource` keeps the loaded module across reruns of the
+    script, so the heavy import is paid exactly once per container lifetime.
+    Returns either the run_chat coroutine function or a string with the
+    formatted traceback on failure.
+    """
+    try:
+        from canaid.api.local import run_chat
+        return run_chat
+    except Exception:
+        return traceback.format_exc()
 
 API_URL = os.getenv("CANAID_API_URL", "").strip()
 EMBEDDED_MODE = not API_URL
@@ -75,11 +91,9 @@ def _embedded_stream(
     Uses a daemon thread running ``asyncio.run`` and bridges frames back via
     a Queue — robust under Streamlit's script-runner thread.
     """
-    if _run_chat is None:
-        raise RuntimeError(
-            "canaid.api.local.run_chat could not be imported at boot — "
-            "see the boot-error banner above for details."
-        )
+    run_chat = _lazy_import_run_chat()
+    if isinstance(run_chat, str):
+        raise RuntimeError(f"Failed to import canaid.api.local:\n{run_chat}")
 
     q: queue.Queue = queue.Queue(maxsize=64)
     DONE = object()
@@ -88,7 +102,7 @@ def _embedded_stream(
     def _runner() -> None:
         async def _drive() -> None:
             try:
-                async for frame in _run_chat(
+                async for frame in run_chat(
                     message, conversation_id=conversation_id
                 ):
                     q.put(frame)
@@ -151,15 +165,6 @@ st.caption(
     "Demo build — no real client data."
 )
 
-# Boot-error banner — fires only if the heavy import at module load failed.
-if _BOOT_ERROR is not None:
-    st.error(
-        "**Boot error:** the chat backend could not be imported. "
-        "Check Streamlit Cloud secrets and dependency versions."
-    )
-    with st.expander("Traceback", expanded=True):
-        st.code(_BOOT_ERROR, language="python")
-    st.stop()
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
