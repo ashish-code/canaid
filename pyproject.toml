@@ -31,26 +31,27 @@ dependencies = [
     "langgraph-checkpoint>=2.0",
     # Observability — wired up incrementally from Phase 8.
     "langfuse>=2.50",
+    "langchain-text-splitters>=0.3",
     # Caching + memory (Phase 6)
     "redis[hiredis]>=5.1",
     "langgraph-checkpoint-postgres>=2.0",
     "psycopg[binary,pool]>=3.2",
+    # Embedded / single-process deploy (FAISS replaces pgvector for the
+    # Streamlit Community Cloud target). Moved out of `[embedded]` extra
+    # so `uv sync` + Streamlit Cloud's uv-sync build install them by
+    # default — without them the chunker can't import on cold start.
+    "faiss-cpu>=1.8",
+    "numpy>=1.26",
+    "tiktoken>=0.8",
 ]
 
 [project.optional-dependencies]
 rag = [
-    "psycopg[binary,pool]>=3.2",
+    # Production-store extras: pgvector via psycopg + OpenSearch client.
+    # The chunker / text-splitters / tiktoken / faiss / numpy moved to base
+    # because the embedded deploy needs them on every install.
     "pgvector>=0.3",
     "opensearch-py>=2.7",
-    "langchain-text-splitters>=0.3",
-    "tiktoken>=0.8",
-]
-# Streamlit-Cloud single-process mode — FAISS replaces pgvector, no DB needed.
-embedded = [
-    "faiss-cpu>=1.8",
-    "numpy>=1.26",
-    "langchain-text-splitters>=0.3",
-    "tiktoken>=0.8",
 ]
 eval = [
     "ragas>=0.2",

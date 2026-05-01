@@ -394,15 +394,18 @@ source = { editable = "." }
 dependencies = [
     { name = "boto3" },
     { name = "botocore" },
+    { name = "faiss-cpu" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "langchain" },
     { name = "langchain-aws" },
     { name = "langchain-core" },
+    { name = "langchain-text-splitters" },
     { name = "langfuse" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint" },
     { name = "langgraph-checkpoint-postgres" },
+    { name = "numpy" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -412,16 +415,11 @@ dependencies = [
     { name = "streamlit" },
     { name = "structlog" },
     { name = "tenacity" },
+    { name = "tiktoken" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.optional-dependencies]
-embedded = [
-    { name = "faiss-cpu" },
-    { name = "langchain-text-splitters" },
-    { name = "numpy" },
-    { name = "tiktoken" },
-]
 eval = [
     { name = "datasets" },
     { name = "pandas" },
@@ -437,11 +435,8 @@ infra = [
     { name = "constructs" },
 ]
 rag = [
-    { name = "langchain-text-splitters" },
     { name = "opensearch-py" },
     { name = "pgvector" },
-    { name = "psycopg", extra = ["binary", "pool"] },
-    { name = "tiktoken" },
 ]
 
 [package.dev-dependencies]
@@ -460,26 +455,24 @@ requires-dist = [
     { name = "botocore", specifier = ">=1.35" },
     { name = "constructs", marker = "extra == 'infra'", specifier = ">=10.3" },
     { name = "datasets", marker = "extra == 'eval'", specifier = ">=3.0" },
-    { name = "faiss-cpu", marker = "extra == 'embedded'", specifier = ">=1.8" },
+    { name = "faiss-cpu", specifier = ">=1.8" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "langchain", specifier = ">=0.3" },
     { name = "langchain-aws", specifier = ">=0.2" },
     { name = "langchain-core", specifier = ">=0.3" },
-    { name = "langchain-text-splitters", marker = "extra == 'embedded'", specifier = ">=0.3" },
-    { name = "langchain-text-splitters", marker = "extra == 'rag'", specifier = ">=0.3" },
+    { name = "langchain-text-splitters", specifier = ">=0.3" },
     { name = "langfuse", specifier = ">=2.50" },
     { name = "langgraph", specifier = ">=0.2" },
     { name = "langgraph-checkpoint", specifier = ">=2.0" },
     { name = "langgraph-checkpoint-postgres", specifier = ">=2.0" },
-    { name = "numpy", marker = "extra == 'embedded'", specifier = ">=1.26" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "opensearch-py", marker = "extra == 'rag'", specifier = ">=2.7" },
     { name = "pandas", marker = "extra == 'eval'", specifier = ">=2.2" },
     { name = "pgvector", marker = "extra == 'rag'", specifier = ">=0.3" },
     { name = "presidio-analyzer", marker = "extra == 'guardrails'", specifier = ">=2.2" },
     { name = "presidio-anonymizer", marker = "extra == 'guardrails'", specifier = ">=2.2" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
-    { name = "psycopg", extras = ["binary", "pool"], marker = "extra == 'rag'", specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "python-dotenv", specifier = ">=1.0" },
@@ -489,12 +482,11 @@ requires-dist = [
     { name = "streamlit", specifier = ">=1.39" },
     { name = "structlog", specifier = ">=24.4" },
     { name = "tenacity", specifier = ">=9.0" },
-    { name = "tiktoken", marker = "extra == 'embedded'", specifier = ">=0.8" },
-    { name = "tiktoken", marker = "extra == 'rag'", specifier = ">=0.8" },
+    { name = "tiktoken", specifier = ">=0.8" },
     { name = "trulens", marker = "extra == 'eval'", specifier = ">=1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
-provides-extras = ["rag", "embedded", "eval", "guardrails", "infra"]
+provides-extras = ["rag", "eval", "guardrails", "infra"]
 
 [package.metadata.requires-dev]
 dev = [
