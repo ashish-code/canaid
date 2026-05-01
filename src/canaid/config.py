@@ -38,7 +38,10 @@ class Settings(BaseSettings):
     intent_model: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     qualifier_model: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
     rag_model: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-    tool_model: str = "meta.llama3-3-70b-instruct-v1:0"
+    # Llama 3.3 on Bedrock is on-demand only via cross-region inference
+    # profiles — the bare `meta.llama3-3-70b-instruct-v1:0` ID returns
+    # "Invocation of model ID … with on-demand throughput isn't supported".
+    tool_model: str = "us.meta.llama3-3-70b-instruct-v1:0"
     summarizer_model: str = "us.amazon.nova-lite-v1:0"
     embed_model: str = "amazon.titan-embed-text-v2:0"
 
