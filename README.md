@@ -1,138 +1,218 @@
-# CanAID — Multi-Agent Contact Center Chatbot
+# CanAID
 
-A production-pattern multi-agent chatbot for a B2B healthcare supply-chain
-contact center. The bot itself is intentionally modest; the **harness
-around it** — observability, evaluation, guardrails, caching, audit,
-IaC — is the point.
+> Multi-agent contact-center chatbot harness on AWS Bedrock — LangGraph
+> orchestration, hybrid retrieval, three-layer guardrails, online +
+> offline evaluation, per-turn cost & latency telemetry.
 
-> **Why this exists.** Built as a portfolio piece to demonstrate
-> end-to-end "harness engineering" for production LLM systems on AWS.
-> The contact-center domain is realistic but synthetic — there is no
-> real client data, no real integrations, and the bot does not give
-> clinical advice.
+A reference implementation of the **harness around an LLM** rather than
+the LLM itself. The agents and prompts are deliberately modest; the
+interesting engineering is in observability, evaluation, guardrails,
+caching, audit, and IaC. The domain — a B2B healthcare-supply-chain
+contact center — is synthetic; nothing here is affiliated with any real
+distributor, and no real client data is used.
 
-## Stack at a glance
+## What's interesting in this repo
 
-| Layer | Choice | Why |
-|---|---|---|
-| Language | Python 3.12 | Modern typing |
-| LLM gateway | **AWS Bedrock** (Converse API) | One API across vendors |
-| Models | Sonnet · Haiku · Llama 3.3 · Nova Lite · Titan | Different LLM per agent — see `docs/02-agents.md` and ADR-0003 |
-| Orchestration | **LangGraph** StateGraph + checkpointer | Supervisor/sub-agent, durable resume |
-| RAG | pgvector locally / Aurora-pgvector in prod | OpenSearch upgrade in ADR-0005 |
-| Cache | **Valkey** (Redis-compatible) Serverless | Turn-level, exact-match, intent-gated |
-| Guardrails | Bedrock Guardrails + Comprehend + regex | Three-layer defense in depth |
-| Evaluation | **RAGAS** + **TruLens** + **LangFuse Cloud** | Each catches different failures — `docs/07-evaluation.md` |
-| Observability | structlog (PII-scrubbed) + LangFuse spans + audit log | Every turn traceable |
-| API | FastAPI + SSE | Streaming end-to-end |
-| UI | Streamlit | Fastest believable demo surface |
-| IaC | AWS CDK (Python) | ECS Fargate + Aurora + Valkey + ALB |
+**Per-agent model registry.** Six agents, four model families across
+three vendors. Routing-only traffic goes to a cheap fast model (Haiku
+4.5); reasoning paths go to Sonnet 4.5; tool-using paths go to Llama
+3.3 (Meta) for cross-vendor portability proof; cheap utility paths go
+to Nova Lite (Amazon). All swappable via env vars — see
+`src/canaid/llm/registry.py`.
 
-## Quickstart (local)
+**Two-node RAG with citations on the wire.** The `rag_retrieve` node
+runs synchronously (Titan v2 embed → pgvector / FAISS top-k →
+similarity threshold). The `rag_generate` node streams tokens. The API
+emits a `citations` SSE frame the moment retrieval finishes — the UI
+renders source cards before any token arrives. See
+`src/canaid/agents/rag.py`.
+
+**Three independent guardrail layers.**
+- Bedrock Guardrails policy enforced inside the Converse call (topic
+  deny-list, content filters, PII anonymize/block).
+- AWS Comprehend PII detection on the audit / persistence path.
+- Regex log scrubber as a structlog processor — every log line, every
+  field, idempotent.
+
+Plus templated refusals so the bot's "no" voice is consistent across
+policy-side and routing-side rejections.
+
+**Three independent evaluation frameworks.** RAGAS (offline batch on a
+golden Q/A set, Bedrock as judge), TruLens (RAG triad — groundedness +
+answer-relevance + context-relevance), LangFuse (online tracing +
+datasets). Each catches different failure modes; none replaces the
+others.
+
+**Per-turn cost meter.** Every Converse response surfaces
+`{input_tokens, output_tokens, cost_usd, latency_ms, by_model}` as a
+final SSE frame. The `by_model` breakdown makes "different LLMs per
+agent" measurable, not just configuration.
+
+**Two transports, one chat protocol.** `canaid.api.local.run_chat` is
+an async generator yielding plain frames. The FastAPI handler wraps
+each in SSE for HTTP streaming; the Streamlit-embedded path consumes
+the generator directly. Same protocol; the deploy mode chooses the
+transport.
+
+**Defense-in-depth audit.** Append-only `audit_events` table records
+every turn (PII-redacted at write time even after Bedrock Guardrails
+has already anonymized the LLM-bound copy). Postgres backend with a
+log fallback that always succeeds.
+
+## Stack
+
+| Layer | Choice |
+|---|---|
+| Language | Python 3.12 |
+| LLM gateway | AWS Bedrock (Converse / ConverseStream) |
+| Models | Anthropic Claude Sonnet 4.5 + Haiku 4.5 · Meta Llama 3.3 70B · Amazon Nova Lite · Amazon Titan Embed v2 |
+| Orchestration | LangGraph (`StateGraph` + checkpointer) |
+| RAG | pgvector (Aurora) for prod / FAISS in-memory for single-process |
+| Cache | Valkey / Redis (TTL) for prod / in-memory dict fallback |
+| Guardrails | Bedrock Guardrails + AWS Comprehend + regex |
+| Evaluation | RAGAS + TruLens + LangFuse Cloud |
+| API | FastAPI + Server-Sent Events |
+| UI | Streamlit |
+| IaC | AWS CDK (Python) |
+| Observability | structlog · LangFuse spans · audit log · cost calculator |
+
+## Architecture
+
+```
+                       (HumanMessage in)
+                              │
+                              ▼
+                       ┌──────────────┐
+                       │   intent     │  Haiku 4.5 (Bedrock toolConfig → JSON)
+                       └──────┬───────┘
+                              │
+                       supervisor_route()  ← deterministic mapping
+                              │
+   ┌──────────┬───────────┬───┴────────┬──────────┬──────────┐
+   ▼          ▼           ▼            ▼          ▼          ▼
+qualifier  rag_retrieve→generate    lookup    escalation   refusal    fallback
+Sonnet 4.5  Sonnet 4.5              Llama 3.3 Nova Lite    template   Sonnet 4.5
+                                                            (no LLM)
+   └──────────┴───────────┴────────────┴──────────┴────────────┘
+                              │
+                              ▼
+                            (END)
+```
+
+Two transport modes share the same graph + same frame protocol:
+
+```
+                    ┌────────────────────────────────────────┐
+   Browser ─────▶  │ Streamlit (UI)                          │
+                    └──────────────────┬─────────────────────┘
+                                       │
+        ┌──────────────────────────────┴────────────────────────────────┐
+        │                                                                │
+        ▼ embedded mode (Streamlit Cloud)                                ▼ API mode (AWS / ECS)
+  run_chat() in-process                                          httpx.stream over SSE
+        │                                                                │
+        └──────────────────────────────┬─────────────────────────────────┘
+                                       ▼
+                              LangGraph StateGraph
+                                       │
+                                       ▼
+                                  AWS Bedrock
+```
+
+## Quickstart — local single-process
 
 ```bash
-# 1. Install
-make install                       # uv sync (base deps)
-make install-rag                   # add psycopg + pgvector + opensearch-py + tiktoken
+# 1. Install deps
+make install                       # base
+uv sync --extra rag --extra embedded
 
 # 2. Configure
 cp .env.example .env
-# edit AWS_PROFILE / AWS_REGION; LangFuse keys optional
+# fill in AWS_PROFILE / AWS_REGION; LangFuse keys optional
+# add CANAID_USE_FAISS=true and CANAID_EMBEDDED=true to .env
 
-# 3. Local infra (Postgres + Valkey-compatible Redis)
-make infra-up
-psql ... < scripts/sql/01-rag.sql      # apply RAG schema (see infra/README.md)
-psql ... < scripts/sql/02-audit.sql    # apply audit schema
+# 3. Run
+make ui                            # Streamlit on :8501
+```
 
-# 4. Build the index
+The first request builds a FAISS index from `data/catalog/skus.jsonl`
+and `data/policies/*.md` (~38 chunks, ~5–10s on cold start). Each
+subsequent turn is sub-3 seconds.
+
+## Quickstart — local API + UI
+
+```bash
+make infra-up                      # postgres+pgvector and redis
+psql ... < scripts/sql/01-rag.sql
+psql ... < scripts/sql/02-audit.sql
 make build-index
-
-# 5. Optional: create the Bedrock Guardrail (paste ID into .env)
-uv run python scripts/setup_guardrail.py
-
-# 6. Run
 make api                           # FastAPI on :8000
 make ui                            # Streamlit on :8501
 ```
 
-## Deploy to AWS
+## Quickstart — production AWS deploy
 
-See `docs/09-deployment.md` and `infra/README.md`. Short version:
+CDK stack in `infra/`:
 
 ```bash
 cd infra
 uv sync --extra infra
-uv run cdk bootstrap     # one-time
+uv run cdk bootstrap
 uv run cdk deploy
 ```
 
-CDK builds the Docker image, pushes to ECR, stands up the stack
-(VPC + Aurora + Valkey + ECS Fargate + ALB), prints the API URL.
-Streamlit Cloud hosts the UI pointing at that URL.
+Provisions VPC + Aurora Serverless v2 (Postgres + pgvector) + Valkey
+Serverless + ECS Fargate behind an ALB + Secrets Manager + IAM task
+role with the necessary Bedrock + Comprehend permissions. Outputs the
+ALB URL.
 
-## Demo
-
-`docs/demo-script.md` is a 5-minute scripted walkthrough that fires
-each specialist once. The Streamlit sidebar has six sample-question
-chips that mirror those steps; click any one to skip typing.
-
-## Documentation
-
-Read in order:
-
-1. [`docs/00-overview.md`](docs/00-overview.md) — what CanAID is and why
-2. [`docs/01-architecture.md`](docs/01-architecture.md) — process boundaries, state, failure modes
-3. [`docs/02-agents.md`](docs/02-agents.md) — the LangGraph + per-agent design
-4. [`docs/03-rag.md`](docs/03-rag.md) — chunker, embeddings, retrieve→generate split, citations
-5. [`docs/04-tool-use.md`](docs/04-tool-use.md) — tool-use loop, mock CRM, PII at the tool boundary
-6. [`docs/05-guardrails-and-pii.md`](docs/05-guardrails-and-pii.md) — three-layer guardrails
-7. [`docs/06-caching-memory.md`](docs/06-caching-memory.md) — turn cache + LangGraph checkpointer
-8. [`docs/07-evaluation.md`](docs/07-evaluation.md) — RAGAS + TruLens + LangFuse, golden datasets
-9. [`docs/08-observability.md`](docs/08-observability.md) — logs · spans · audit · cost meter
-10. [`docs/09-deployment.md`](docs/09-deployment.md) — CDK stack, deploy steps, cost shape
-11. [`docs/10-runbook.md`](docs/10-runbook.md) — day-2 ops
-12. [`docs/adr/`](docs/adr/) — architecture decisions
-13. [`docs/demo-script.md`](docs/demo-script.md) — 5-minute demo walk-through
-
-## Layout
+## Project layout
 
 ```
 src/canaid/
-├── agents/         intent · qualifier · rag · lookup · escalation · refusal · fallback
-├── graph/          state · router · workflow (StateGraph + checkpointer)
-├── llm/            BedrockClient + ChatBedrockConverse + per-agent registry
-├── retrieval/      chunker · Titan embeddings · pgvector store · Retriever facade
-├── tools/          mock CRM + LangChain @tool wrappers
-├── guardrails/     Bedrock Guardrails + Comprehend PII + regex log scrubber + refusal templates
-├── cache/          turn-level Redis cache (intent-gated)
-├── memory/         LangGraph checkpointer factory (MemorySaver / PostgresSaver)
-├── observability/  structlog · LangFuse · audit log · cost calculator
-├── api/            FastAPI + SSE
-└── ui/             Streamlit chat surface
+├── agents/          intent · qualifier · rag · lookup · escalation · refusal · fallback
+├── graph/           state · router · workflow (StateGraph + checkpointer)
+├── llm/             BedrockClient + ChatBedrockConverse + per-agent registry
+├── retrieval/       chunker · Titan embeddings · pgvector / FAISS stores · Retriever
+├── tools/           mock CRM + LangChain @tool wrappers
+├── guardrails/      Bedrock Guardrails + Comprehend PII + regex log scrubber + refusals
+├── cache/           turn-level Redis (or in-memory dict) cache
+├── memory/          LangGraph checkpointer factory (Memory / Postgres)
+├── observability/   structlog · LangFuse · audit log · cost calculator
+├── api/             FastAPI + SSE server + run_chat in-process protocol
+└── ui/              Streamlit chat surface (dual-mode: API or embedded)
 
-eval/               golden datasets + 5 runners (router, refusals, RAGAS, TruLens, LangFuse)
-infra/              AWS CDK stack
-scripts/            SQL migrations + index builder + guardrail setup
-docs/               numbered explainers + ADRs + demo script
+eval/                golden datasets + 5 runners (router, refusals, RAGAS, TruLens, LangFuse)
+infra/               AWS CDK stack (Python)
+scripts/             SQL migrations + index builder + Bedrock Guardrail bootstrap
+tests/               unit tests, no AWS calls — sub-second
 ```
 
 ## Tests
 
 ```bash
-make test          # ~70 tests, no AWS calls; sub-second
+make test
 ```
 
-Tests cover routing, chunker, mock CRM, cache logic, guardrail
-templates + redaction, model registry, cost calculator. AWS-touching
-behavior is covered by the eval runners (which require Bedrock access).
+~80 tests covering router logic, chunker, mock CRM, cache, guardrail
+templates + redaction, model registry, cost calculator, FAISS store.
+No tests touch AWS — the eval runners (`make eval-*`) cover the
+AWS-touching paths.
 
-## What this is *not*
+## Eval suite
 
-- A real product. No real CRM, no real auth, no real ordering.
-- A clinical assistant. The bot refuses clinical/medical questions.
-- Optimized for absolute lowest latency. The harness trades milliseconds
-  for traceability, evaluability, and audit.
+```bash
+uv sync --extra eval
+make build-index
+make eval-router       # intent + route accuracy on golden set
+make eval-refusals     # safety-coverage on adversarial prompts
+make eval-ragas        # faithfulness · answer_relevancy · context_*
+make eval-trulens      # RAG triad — groundedness + answer + context relevance
+make eval-langfuse     # upload golden datasets to LangFuse Cloud
+```
+
+Each runner writes a JSON summary into `eval/results/`.
 
 ## License
 
-Proprietary — interview / portfolio use.
+Proprietary. Demonstration project — no warranty, no support.

@@ -108,16 +108,14 @@ class Settings(BaseSettings):
     def aws_profile(self) -> str | None:
         """Active AWS profile name, if any.
 
-        Default is `vscode-user` to match the AskAI-Mahabharat reference
-        repo's local profile (already exists in ~/.aws/credentials with
-        Bedrock access). Override per-host via the AWS_PROFILE env var.
-
-        Returns None on hosts where env-var creds are present (Streamlit
-        Cloud, ECS task role, GitHub OIDC) — see `make_aws_session`.
+        Defaults to ``default`` — override via the ``AWS_PROFILE`` env var
+        if your local profile is named differently. Returns ``None`` on
+        hosts where env-var creds are present (Streamlit Cloud, ECS task
+        role, GitHub OIDC) — see `make_aws_session`.
         """
         if os.getenv("AWS_ACCESS_KEY_ID"):
             return None
-        return os.getenv("AWS_PROFILE", "vscode-user")
+        return os.getenv("AWS_PROFILE", "default")
 
     def postgres_dsn_host_only(self) -> str:
         """Strip credentials from the Postgres DSN for safe logging."""
@@ -139,15 +137,12 @@ def get_settings() -> Settings:
 def make_aws_session():
     """Single boto3 Session per process, picking the right credential path.
 
-    The pattern mirrors AskAI-Mahabharat's `get_bedrock_client` to keep
-    behavior consistent across the two demos:
-
-      * If AWS_ACCESS_KEY_ID is set (Streamlit Cloud secrets, ECS task
+      * If ``AWS_ACCESS_KEY_ID`` is set (Streamlit Cloud secrets, ECS task
         role with web-identity, GitHub OIDC), build a Session WITHOUT a
-        profile name. Passing profile_name on a host with no
-        ~/.aws/config raises ProfileNotFound — this branch avoids that.
-      * Otherwise honor AWS_PROFILE (default `vscode-user`, matching
-        the local profile in ~/.aws/credentials).
+        profile name. Passing ``profile_name`` on a host with no
+        ``~/.aws/config`` raises ``ProfileNotFound`` — this branch avoids
+        that.
+      * Otherwise honor ``AWS_PROFILE`` (default ``default``).
     """
     import boto3  # local import keeps cold-start light
 

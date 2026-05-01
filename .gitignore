@@ -51,3 +51,7 @@ trulens.db
 # Logs
 *.log
 logs/
+
+# Documentation + IAM helper artifacts kept in a private location.
+docs/
+infra/iam/
