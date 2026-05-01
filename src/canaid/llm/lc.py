@@ -33,13 +33,19 @@ def get_chat_model(
     temperature: float = 0.3,
     max_tokens: int = 800,
 ) -> ChatBedrockConverse:
+    from canaid.config import make_aws_session
     from canaid.guardrails.policy import guardrails_for_chat_bedrock
 
     spec = get_model_spec(agent)
     region = get_settings().aws_region
+    # Pass the configured boto3 client explicitly so ChatBedrockConverse
+    # uses the same credential resolution (profile vs env-var) as the
+    # rest of the app, instead of constructing its own session.
+    bedrock = make_aws_session().client("bedrock-runtime", region_name=region)
     kwargs: dict = dict(
         model=spec.model_id,
         region_name=region,
+        client=bedrock,
         temperature=temperature,
         max_tokens=max_tokens,
     )

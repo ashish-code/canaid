@@ -14,7 +14,17 @@ import os
 from functools import lru_cache
 from typing import Literal
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Promote `.env` into `os.environ` early so:
+#   * AWS_PROFILE / AWS_REGION reads (via os.getenv elsewhere) work.
+#   * The LangFuse SDK (which reads LANGFUSE_* from os.environ) works.
+#   * boto3's default credential chain finds AWS_ACCESS_KEY_ID-style creds.
+# pydantic-settings reads .env separately for its own typed fields; calling
+# load_dotenv here is additive, not a replacement. `override=False` keeps
+# real shell exports winning over .env (the conventional precedence).
+load_dotenv(override=False)
 
 
 class Settings(BaseSettings):
@@ -38,7 +48,10 @@ class Settings(BaseSettings):
     intent_model: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     qualifier_model: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
     rag_model: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-    tool_model: str = "meta.llama3-3-70b-instruct-v1:0"
+    # Llama 3.3 on Bedrock is on-demand only via cross-region inference
+    # profiles — the bare `meta.llama3-3-70b-instruct-v1:0` ID returns
+    # "Invocation of model ID … with on-demand throughput isn't supported".
+    tool_model: str = "us.meta.llama3-3-70b-instruct-v1:0"
     summarizer_model: str = "us.amazon.nova-lite-v1:0"
     embed_model: str = "amazon.titan-embed-text-v2:0"
 
@@ -52,6 +65,13 @@ class Settings(BaseSettings):
     cache_enabled: bool = True
     use_postgres_checkpointer: bool = False
 
+    # -- Single-process / Streamlit Cloud mode -------------------------------
+    # When `embedded=True`, the Streamlit app calls the LangGraph workflow
+    # in-process instead of HTTP-streaming through the FastAPI server. Pairs
+    # naturally with `use_faiss=True` (FAISS in-memory store, no Postgres).
+    embedded: bool = False
+    use_faiss: bool = False
+
     # -- API + UI -------------------------------------------------------------
     api_host: str = "0.0.0.0"
     api_port: int = 8000
@@ -63,9 +83,17 @@ class Settings(BaseSettings):
 
     # -- Observability --------------------------------------------------------
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    langfuse_public_key: str | None = None
-    langfuse_secret_key: str | None = None
+    # LangFuse SDK uses LANGFUSE_* (unprefixed) by convention. Read those
+    # via os.getenv to bypass the CANAID_ env_prefix.
     langfuse_host: str = "https://us.cloud.langfuse.com"
+
+    @property
+    def langfuse_public_key(self) -> str | None:
+        return os.getenv("LANGFUSE_PUBLIC_KEY") or None
+
+    @property
+    def langfuse_secret_key(self) -> str | None:
+        return os.getenv("LANGFUSE_SECRET_KEY") or None
 
     @property
     def aws_region(self) -> str:
@@ -75,6 +103,21 @@ class Settings(BaseSettings):
             or os.getenv("AWS_DEFAULT_REGION")
             or "us-east-1"
         )
+
+    @property
+    def aws_profile(self) -> str | None:
+        """Active AWS profile name, if any.
+
+        Default is `vscode-user` to match the AskAI-Mahabharat reference
+        repo's local profile (already exists in ~/.aws/credentials with
+        Bedrock access). Override per-host via the AWS_PROFILE env var.
+
+        Returns None on hosts where env-var creds are present (Streamlit
+        Cloud, ECS task role, GitHub OIDC) — see `make_aws_session`.
+        """
+        if os.getenv("AWS_ACCESS_KEY_ID"):
+            return None
+        return os.getenv("AWS_PROFILE", "vscode-user")
 
     def postgres_dsn_host_only(self) -> str:
         """Strip credentials from the Postgres DSN for safe logging."""
@@ -92,20 +135,41 @@ def get_settings() -> Settings:
     return Settings()
 
 
+@lru_cache(maxsize=1)
+def make_aws_session():
+    """Single boto3 Session per process, picking the right credential path.
+
+    The pattern mirrors AskAI-Mahabharat's `get_bedrock_client` to keep
+    behavior consistent across the two demos:
+
+      * If AWS_ACCESS_KEY_ID is set (Streamlit Cloud secrets, ECS task
+        role with web-identity, GitHub OIDC), build a Session WITHOUT a
+        profile name. Passing profile_name on a host with no
+        ~/.aws/config raises ProfileNotFound — this branch avoids that.
+      * Otherwise honor AWS_PROFILE (default `vscode-user`, matching
+        the local profile in ~/.aws/credentials).
+    """
+    import boto3  # local import keeps cold-start light
+
+    s = get_settings()
+    if os.getenv("AWS_ACCESS_KEY_ID"):
+        return boto3.Session(region_name=s.aws_region)
+    return boto3.Session(profile_name=s.aws_profile, region_name=s.aws_region)
+
+
 def boto_client_factory_safe(service: str):
-    """Build a boto3 client; return None if AWS credentials aren't available.
+    """Build a boto3 client; return None if credentials aren't available.
 
     Used by guardrail / PII paths that should *no-op gracefully* when run in
     a dev environment without AWS configured (e.g., unit tests).
     """
     try:
-        import boto3  # local import keeps cold-start light
-        from botocore.exceptions import NoCredentialsError
+        from botocore.exceptions import NoCredentialsError, ProfileNotFound
 
         s = get_settings()
         try:
-            return boto3.client(service, region_name=s.aws_region)
-        except NoCredentialsError:
+            return make_aws_session().client(service, region_name=s.aws_region)
+        except (NoCredentialsError, ProfileNotFound):
             return None
     except Exception:
         return None

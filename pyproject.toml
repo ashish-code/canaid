@@ -45,6 +45,13 @@ rag = [
     "langchain-text-splitters>=0.3",
     "tiktoken>=0.8",
 ]
+# Streamlit-Cloud single-process mode — FAISS replaces pgvector, no DB needed.
+embedded = [
+    "faiss-cpu>=1.8",
+    "numpy>=1.26",
+    "langchain-text-splitters>=0.3",
+    "tiktoken>=0.8",
+]
 eval = [
     "ragas>=0.2",
     "trulens>=1.0",
