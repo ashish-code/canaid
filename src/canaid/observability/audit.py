@@ -101,10 +101,12 @@ class AuditWriter:
             self._available = False
             # Log path is the fallback. We log the row but mark the source so
             # an operator can backfill if needed.
+            # `event` is reserved by structlog (the positional log name), so
+            # we surface the audit payload under a different key.
             log.warning(
                 "audit.persist_failed",
                 error=str(exc),
-                event=asdict(ev),
+                audit_payload=asdict(ev),
             )
 
 
