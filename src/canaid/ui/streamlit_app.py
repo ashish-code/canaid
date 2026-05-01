@@ -57,25 +57,50 @@ def _api_stream(message: str, conversation_id: str | None) -> Iterator[dict[str,
 def _embedded_stream(
     message: str, conversation_id: str | None
 ) -> Iterator[dict[str, Any]]:
-    """Drive `run_chat` (async generator) from sync Streamlit code.
+    """Drive `run_chat` (an async generator) from Streamlit's sync script.
 
-    Streamlit's render loop is sync; we own one event loop, drive the async
-    generator one frame at a time, and yield to the caller in between so
-    Streamlit can repaint mid-turn.
+    We dedicate a daemon thread to running the async generator's event loop
+    and bridge frames back via a Queue. This avoids the pitfall of mixing
+    Streamlit's own event loop / script-runner thread with our own
+    `loop.run_until_complete(__anext__())` calls (which has surfaced as
+    silent failures on Streamlit Cloud's container in the past).
     """
+    import queue
+    import threading
+
     from canaid.api.local import run_chat
 
-    loop = asyncio.new_event_loop()
-    try:
-        agen = run_chat(message, conversation_id=conversation_id)
-        while True:
+    q: queue.Queue = queue.Queue(maxsize=64)
+    DONE = object()
+    EXC = object()
+
+    def _runner() -> None:
+        async def _drive() -> None:
             try:
-                frame = loop.run_until_complete(agen.__anext__())
-            except StopAsyncIteration:
-                return
-            yield frame
-    finally:
-        loop.close()
+                async for frame in run_chat(
+                    message, conversation_id=conversation_id
+                ):
+                    q.put(frame)
+            except Exception as exc:
+                q.put((EXC, exc))
+            finally:
+                q.put(DONE)
+
+        try:
+            asyncio.run(_drive())
+        except Exception as exc:
+            q.put((EXC, exc))
+            q.put(DONE)
+
+    threading.Thread(target=_runner, daemon=True).start()
+
+    while True:
+        item = q.get()
+        if item is DONE:
+            return
+        if isinstance(item, tuple) and len(item) == 2 and item[0] is EXC:
+            raise item[1]
+        yield item
 
 
 def _frame_stream(message: str, conversation_id: str | None) -> Iterator[dict[str, Any]]:
@@ -285,6 +310,11 @@ if prompt:
         # at the very top (rare, signals "this was free"), then the
         # response body, then the supporting trace expanders below.
         cache_box = st.empty()
+        # Visible status during the long-running first turn (cold-start
+        # FAISS build, Bedrock cross-region warm-up). Cleared as soon as
+        # the first frame arrives.
+        status_box = st.empty()
+        status_box.info("⏳ Thinking… (first request may take ~10s while the catalog index warms up)")
         body = st.empty()
         trace_box = st.empty()
         cite_box = st.empty()
@@ -300,6 +330,8 @@ if prompt:
 
         try:
             for payload in _frame_stream(prompt, st.session_state.conversation_id):
+                # Clear the cold-start status the moment any frame arrives.
+                status_box.empty()
                 kind = payload.get("type")
                 if kind == "cache_hit":
                     cache_hit = True
@@ -346,7 +378,14 @@ if prompt:
                 elif kind == "error":
                     accumulated = f"_Error: {payload.get('message')}_"
         except Exception as exc:
-            accumulated = f"_Stream error: {type(exc).__name__}: {exc}_"
+            status_box.empty()
+            # Surface the full traceback inline so Streamlit Cloud users can
+            # see what went wrong without digging into the logs panel.
+            import traceback
+            accumulated = (
+                f"**Stream error — {type(exc).__name__}: {exc}**\n\n"
+                f"```\n{traceback.format_exc()}\n```"
+            )
 
         body.markdown(accumulated or "_(no response)_")
         st.session_state.messages.append(
