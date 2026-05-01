@@ -36,5 +36,8 @@ httpx>=0.27
 # Observability — LangFuse Cloud (optional; works without keys)
 langfuse>=2.50
 
-# Install the package itself (so canaid.* imports resolve from src/)
--e .
+# NOTE: we deliberately do NOT include `-e .` here. Streamlit Cloud's
+# build environment is unreliable for editable installs of hatch-built
+# packages; instead, the `streamlit_app.py` shim at the repo root adds
+# `src/` to sys.path before importing `canaid.*`. This works regardless
+# of whether the package itself is installed.
