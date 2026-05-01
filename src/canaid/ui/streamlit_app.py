@@ -18,10 +18,23 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import queue
+import threading
+import traceback
 from collections.abc import Iterator
 from typing import Any
 
 import streamlit as st
+
+# Pre-import the heavy chat machinery at module load so any import failure
+# (langchain, faiss, langgraph, etc.) blows up loudly with a visible
+# traceback at the top of the page rather than silently inside a generator.
+_BOOT_ERROR: str | None = None
+try:
+    from canaid.api.local import run_chat as _run_chat
+except Exception:
+    _run_chat = None
+    _BOOT_ERROR = traceback.format_exc()
 
 API_URL = os.getenv("CANAID_API_URL", "").strip()
 EMBEDDED_MODE = not API_URL
@@ -59,16 +72,14 @@ def _embedded_stream(
 ) -> Iterator[dict[str, Any]]:
     """Drive `run_chat` (an async generator) from Streamlit's sync script.
 
-    We dedicate a daemon thread to running the async generator's event loop
-    and bridge frames back via a Queue. This avoids the pitfall of mixing
-    Streamlit's own event loop / script-runner thread with our own
-    `loop.run_until_complete(__anext__())` calls (which has surfaced as
-    silent failures on Streamlit Cloud's container in the past).
+    Uses a daemon thread running ``asyncio.run`` and bridges frames back via
+    a Queue — robust under Streamlit's script-runner thread.
     """
-    import queue
-    import threading
-
-    from canaid.api.local import run_chat
+    if _run_chat is None:
+        raise RuntimeError(
+            "canaid.api.local.run_chat could not be imported at boot — "
+            "see the boot-error banner above for details."
+        )
 
     q: queue.Queue = queue.Queue(maxsize=64)
     DONE = object()
@@ -77,7 +88,7 @@ def _embedded_stream(
     def _runner() -> None:
         async def _drive() -> None:
             try:
-                async for frame in run_chat(
+                async for frame in _run_chat(
                     message, conversation_id=conversation_id
                 ):
                     q.put(frame)
@@ -139,6 +150,16 @@ st.caption(
     "Multi-agent chatbot for healthcare supply-chain B2B. "
     "Demo build — no real client data."
 )
+
+# Boot-error banner — fires only if the heavy import at module load failed.
+if _BOOT_ERROR is not None:
+    st.error(
+        "**Boot error:** the chat backend could not be imported. "
+        "Check Streamlit Cloud secrets and dependency versions."
+    )
+    with st.expander("Traceback", expanded=True):
+        st.code(_BOOT_ERROR, language="python")
+    st.stop()
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
