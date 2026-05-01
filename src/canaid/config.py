@@ -14,7 +14,17 @@ import os
 from functools import lru_cache
 from typing import Literal
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Promote `.env` into `os.environ` early so:
+#   * AWS_PROFILE / AWS_REGION reads (via os.getenv elsewhere) work.
+#   * The LangFuse SDK (which reads LANGFUSE_* from os.environ) works.
+#   * boto3's default credential chain finds AWS_ACCESS_KEY_ID-style creds.
+# pydantic-settings reads .env separately for its own typed fields; calling
+# load_dotenv here is additive, not a replacement. `override=False` keeps
+# real shell exports winning over .env (the conventional precedence).
+load_dotenv(override=False)
 
 
 class Settings(BaseSettings):
@@ -73,9 +83,17 @@ class Settings(BaseSettings):
 
     # -- Observability --------------------------------------------------------
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    langfuse_public_key: str | None = None
-    langfuse_secret_key: str | None = None
+    # LangFuse SDK uses LANGFUSE_* (unprefixed) by convention. Read those
+    # via os.getenv to bypass the CANAID_ env_prefix.
     langfuse_host: str = "https://us.cloud.langfuse.com"
+
+    @property
+    def langfuse_public_key(self) -> str | None:
+        return os.getenv("LANGFUSE_PUBLIC_KEY") or None
+
+    @property
+    def langfuse_secret_key(self) -> str | None:
+        return os.getenv("LANGFUSE_SECRET_KEY") or None
 
     @property
     def aws_region(self) -> str:
