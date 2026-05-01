@@ -327,11 +327,17 @@ if prompt is None and st.session_state.queued_prompt is not None:
 
 
 if prompt:
+    # ---- diagnostic markers — go straight to stdout, captured by Streamlit
+    # Cloud's runtime log even if the page itself fails to render.
+    print(f"[CANAID-DIAG] click_received len={len(prompt)} embedded={EMBEDDED_MODE}", flush=True)
+
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
+    print("[CANAID-DIAG] user_message_rendered", flush=True)
 
     with st.chat_message("assistant"):
+        print("[CANAID-DIAG] assistant_block_opened", flush=True)
         # Layout order matches how the eye reads the message: cache badge
         # at the very top (rare, signals "this was free"), then the
         # response body, then the supporting trace expanders below.
@@ -355,10 +361,12 @@ if prompt:
         cache_hit = False
 
         try:
+            print("[CANAID-DIAG] entering_frame_stream", flush=True)
             for payload in _frame_stream(prompt, st.session_state.conversation_id):
+                kind = payload.get("type")
+                print(f"[CANAID-DIAG] frame={kind}", flush=True)
                 # Clear the cold-start status the moment any frame arrives.
                 status_box.empty()
-                kind = payload.get("type")
                 if kind == "cache_hit":
                     cache_hit = True
                     cache_box.success("⚡ cache hit — replayed without LLM call")
@@ -405,12 +413,13 @@ if prompt:
                     accumulated = f"_Error: {payload.get('message')}_"
         except Exception as exc:
             status_box.empty()
+            tb_text = traceback.format_exc()
+            print(f"[CANAID-DIAG] stream_exception {type(exc).__name__}: {exc}\n{tb_text}", flush=True)
             # Surface the full traceback inline so Streamlit Cloud users can
             # see what went wrong without digging into the logs panel.
-            import traceback
             accumulated = (
                 f"**Stream error — {type(exc).__name__}: {exc}**\n\n"
-                f"```\n{traceback.format_exc()}\n```"
+                f"```\n{tb_text}\n```"
             )
 
         body.markdown(accumulated or "_(no response)_")
