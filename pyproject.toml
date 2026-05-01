@@ -10,6 +10,13 @@ authors = [{ name = "Ashish Gupta" }]
 # Phase 1 runtime dependencies. RAG / eval / infra deps live in optional
 # groups so we can install them per phase without bloating the base image.
 dependencies = [
+    # Streamlit Cloud build pulls these from uv.lock. Keep base lean — every
+    # heavy package not strictly needed for the embedded chat path went to
+    # extras to lower memory pressure on Streamlit Cloud's 1 GB free tier.
+    # Streamlit pin: <1.55 sticks with the Tornado-based server; 1.55+ moved
+    # to Uvicorn and we hit a click-rerun WebSocket failure on Streamlit Cloud.
+    "streamlit>=1.39,<1.50",
+
     "boto3>=1.35",
     "botocore>=1.35",
     "pydantic>=2.9",
@@ -17,41 +24,45 @@ dependencies = [
     "python-dotenv>=1.0",
     "structlog>=24.4",
     "tenacity>=9.0",
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
-    "sse-starlette>=2.1",
     "httpx>=0.27",
-    "streamlit>=1.39",
-    # LangChain / LangGraph land in Phase 2 but they're light, pin now so the
-    # lockfile stabilizes early.
+
+    # LangChain / LangGraph
     "langchain>=0.3",
     "langchain-core>=0.3",
     "langchain-aws>=0.2",
     "langgraph>=0.2",
     "langgraph-checkpoint>=2.0",
-    # Observability — wired up incrementally from Phase 8.
-    "langfuse>=2.50",
     "langchain-text-splitters>=0.3",
-    # Caching + memory (Phase 6)
-    "redis[hiredis]>=5.1",
-    "langgraph-checkpoint-postgres>=2.0",
-    "psycopg[binary,pool]>=3.2",
-    # Embedded / single-process deploy (FAISS replaces pgvector for the
-    # Streamlit Community Cloud target). Moved out of `[embedded]` extra
-    # so `uv sync` + Streamlit Cloud's uv-sync build install them by
-    # default — without them the chunker can't import on cold start.
+
+    # Observability
+    "langfuse>=2.50",
+
+    # Embedded retrieval (FAISS in-memory; required on Streamlit Cloud)
     "faiss-cpu>=1.8",
     "numpy>=1.26",
     "tiktoken>=0.8",
 ]
 
 [project.optional-dependencies]
+api = [
+    # FastAPI / SSE — only needed when running the API sidecar locally or
+    # on AWS. NOT needed for Streamlit Cloud (embedded) deploy.
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sse-starlette>=2.1",
+]
 rag = [
-    # Production-store extras: pgvector via psycopg + OpenSearch client.
-    # The chunker / text-splitters / tiktoken / faiss / numpy moved to base
-    # because the embedded deploy needs them on every install.
+    # Production-store extras: pgvector + Postgres + OpenSearch.
     "pgvector>=0.3",
     "opensearch-py>=2.7",
+    "psycopg[binary,pool]>=3.2",
+]
+prod = [
+    # Production cache + checkpointer. Embedded deploy uses in-memory
+    # equivalents (dict-with-TTL + MemorySaver), no extra deps needed.
+    "redis[hiredis]>=5.1",
+    "langgraph-checkpoint-postgres>=2.0",
+    "psycopg[binary,pool]>=3.2",
 ]
 eval = [
     "ragas>=0.2",
