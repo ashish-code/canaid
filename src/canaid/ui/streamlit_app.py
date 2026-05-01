@@ -144,6 +144,15 @@ with st.sidebar:
     mode_label = "embedded (single-process)" if EMBEDDED_MODE else f"API @ {API_URL}"
     st.caption(f"**Mode:** {mode_label}")
 
+    st.subheader("Try a sample question")
+    for label, prompt in _SAMPLE_QUESTIONS:
+        if st.button(label, key=f"sample-{label}", use_container_width=True):
+            st.session_state.queued_prompt = prompt
+            st.session_state.messages = []
+            st.session_state.conversation_id = None
+            st.rerun()
+
+    st.divider()
     st.subheader("Models per agent")
     if EMBEDDED_MODE:
         # No API to query — render directly from the registry.
@@ -167,15 +176,6 @@ with st.sidebar:
                 )
         except Exception as e:
             st.warning(f"Cannot reach API at {API_URL}\n\n{e}")
-
-    st.divider()
-    st.subheader("Try a sample question")
-    for label, prompt in _SAMPLE_QUESTIONS:
-        if st.button(label, key=f"sample-{label}", use_container_width=True):
-            st.session_state.queued_prompt = prompt
-            st.session_state.messages = []
-            st.session_state.conversation_id = None
-            st.rerun()
 
     st.divider()
     if st.button("Reset conversation", use_container_width=True):
@@ -253,16 +253,19 @@ def _render_usage(usage: dict | None) -> None:
 # ---- History ---------------------------------------------------------------
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        if msg["role"] == "assistant" and msg.get("trace"):
-            with st.expander("agent trace", expanded=False):
-                _render_trace(msg["trace"])
-        if msg["role"] == "assistant" and msg.get("citations"):
-            _render_citations(msg["citations"])
-        if msg["role"] == "assistant" and msg.get("tool_events"):
-            _render_tool_calls(msg["tool_events"])
-        if msg["role"] == "assistant" and msg.get("usage"):
-            _render_usage(msg["usage"])
+        # Response body first; supporting context (trace, citations, tools,
+        # usage) renders below for users who want to drill in.
         st.markdown(msg["content"])
+        if msg["role"] == "assistant":
+            if msg.get("trace"):
+                with st.expander("agent trace", expanded=False):
+                    _render_trace(msg["trace"])
+            if msg.get("citations"):
+                _render_citations(msg["citations"])
+            if msg.get("tool_events"):
+                _render_tool_calls(msg["tool_events"])
+            if msg.get("usage"):
+                _render_usage(msg["usage"])
 
 
 # ---- Input -----------------------------------------------------------------
@@ -278,11 +281,14 @@ if prompt:
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
+        # Layout order matches how the eye reads the message: cache badge
+        # at the very top (rare, signals "this was free"), then the
+        # response body, then the supporting trace expanders below.
         cache_box = st.empty()
+        body = st.empty()
         trace_box = st.empty()
         cite_box = st.empty()
         tool_box = st.empty()
-        body = st.empty()
         usage_box = st.empty()
 
         accumulated = ""
