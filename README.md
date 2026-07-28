@@ -82,6 +82,20 @@ log fallback that always succeeds.
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    U[User / channel] --> R{Router agent}
+    R -->|billing| A1[Billing agent]
+    R -->|tech| A2[Tech-support agent]
+    R -->|account| A3[Account agent]
+    A1 --> RAG[(Hybrid retrieval<br/>vector + keyword)]
+    A2 --> RAG
+    A3 --> RAG
+    RAG --> G[Guardrails<br/>3 layers]
+    G --> RESP[Response + telemetry<br/>cost / latency]
+    RESP --> E[[Eval: RAGAS / TruLens / LangFuse]]
+```
+
 ```
                        (HumanMessage in)
                               │
