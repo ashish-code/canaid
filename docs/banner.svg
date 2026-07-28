@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" font-family="'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0B1120"/><stop offset="1" stop-color="#111C33"/></linearGradient>
+    <radialGradient id="glow" cx="0.82" cy="0.45" r="0.5"><stop offset="0" stop-color="#8B7CF6" stop-opacity="0.28"/><stop offset="1" stop-color="#8B7CF6" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="1200" height="300" rx="16" fill="url(#bg)"/>
+  <rect width="1200" height="300" rx="16" fill="url(#glow)"/>
+  <rect x="1.5" y="1.5" width="1197" height="297" rx="15" fill="none" stroke="#8B7CF6" stroke-opacity="0.22"/>
+  <rect x="64" y="70" width="4" height="150" rx="2" fill="#8B7CF6"/>
+  <text x="88" y="86" fill="#8B7CF6" font-size="15" font-weight="700" letter-spacing="3.2">MULTI-AGENT · AWS BEDROCK · LANGGRAPH</text>
+  <text x="86" y="150" fill="#F4F7FB" font-size="58" font-weight="800" letter-spacing="0.5">CanAID</text>
+  <text x="88" y="192" fill="#9AA7BD" font-size="21">Multi-agent contact-center harness — routing, hybrid</text><text x="88" y="219" fill="#9AA7BD" font-size="21">retrieval, three-layer guardrails, online + offline eval.</text>
+  <g font-size="15" font-weight="600" fill="#C7D2E4"><g><rect x="88" y="244" width="102" height="30" rx="15" fill="#18233A" stroke="#8B7CF6" stroke-opacity="0.45"/><text x="139" y="264" text-anchor="middle">LangGraph</text></g><g><rect x="200" y="244" width="85" height="30" rx="15" fill="#18233A" stroke="#8B7CF6" stroke-opacity="0.45"/><text x="242.5" y="264" text-anchor="middle">Bedrock</text></g><g><rect x="295" y="244" width="69" height="30" rx="15" fill="#18233A" stroke="#8B7CF6" stroke-opacity="0.45"/><text x="329.5" y="264" text-anchor="middle">RAGAS</text></g><g><rect x="374" y="244" width="85" height="30" rx="15" fill="#18233A" stroke="#8B7CF6" stroke-opacity="0.45"/><text x="416.5" y="264" text-anchor="middle">TruLens</text></g><g><rect x="469" y="244" width="53" height="30" rx="15" fill="#18233A" stroke="#8B7CF6" stroke-opacity="0.45"/><text x="495.5" y="264" text-anchor="middle">CDK</text></g></g>
+  <g stroke-linecap="round">
+      <g stroke="#8B7CF6" stroke-opacity="0.55" stroke-width="2" fill="none">
+        <path d="M862,150 L928,150"/><path d="M964,150 L1036,96"/><path d="M964,150 L1044,150"/>
+        <path d="M964,150 L1036,204"/><path d="M1064,90 L1120,74"/><path d="M1070,150 L1128,150"/><path d="M1064,210 L1120,226"/>
+      </g>
+      <circle cx="855" cy="150" r="15" fill="#141d33" stroke="#8B7CF6" stroke-width="2"/>
+      <circle cx="946" cy="150" r="24" fill="#1a2340" stroke="#8B7CF6" stroke-width="2.5"/><circle cx="946" cy="150" r="7" fill="#8B7CF6"/>
+      <circle cx="1052" cy="90" r="17" fill="#141d33" stroke="#B7A9FF" stroke-width="2"/>
+      <circle cx="1058" cy="150" r="17" fill="#141d33" stroke="#B7A9FF" stroke-width="2"/>
+      <circle cx="1052" cy="210" r="17" fill="#141d33" stroke="#B7A9FF" stroke-width="2"/>
+      <circle cx="1130" cy="70" r="9" fill="#8B7CF6" fill-opacity="0.85"/><circle cx="1138" cy="150" r="9" fill="#8B7CF6" fill-opacity="0.85"/><circle cx="1130" cy="230" r="9" fill="#8B7CF6" fill-opacity="0.85"/>
+    </g>
+</svg>
