@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="docs/banner.svg" alt="CanAID — multi-agent contact-center harness on AWS Bedrock" width="100%">
+</div>
+
 # CanAID
 
 > Multi-agent contact-center chatbot harness on AWS Bedrock — LangGraph
